@@ -28,7 +28,7 @@ def obtain_ppg_ecg(subject):
     # Obtain numpy arrays of recorded ECG, PPG and time in ms for subject.
     ecg = subject['ecg'].to_numpy()
     ppg = subject['ppg'].to_numpy()
-    time = subject['time'].to_numpy*1e-3
+    time = 1e-3*subject['time'].to_numpy()
     return ecg, ppg, time
 
 def butter_high_pass(cutoff, sample_freq, order):
@@ -52,32 +52,17 @@ def notch_filter(cutoff, sample_freq, q):
     b, a = iirnotch(freq, q)
     return b, a
 
-def high_pass(signal, sample_freq, order):
-    b,a = butter_high_pass(cutoff_high, sample_freq, order)
+def overall_filter(signal, sample_freq, order, powerline):
+    b, a = butter_high_pass(cutoff_high, sample_freq, order)
     x = lfilter(b, a, signal)
-    return x
-
-def low_pass(signal, sample_freq, order):
-    b,a = butter_low_pass(cutoff_low, sample_freq, order)
-    y = lfilter(b, a, signal)
-    return y
-
-def notch(signal, powerline_freq, sample_freq, q):
-    b,a = notch_filter(powerline_freq, sample_freq, q)
-    z = lfilter(b, a, signal)
-    return z
-
-def overall_filter(signal, sample_freq, order):
-    b, a = butter_highpass(cutoff_high, sample_freq, order)
-    x = lfilter(b, a, signal)
-    d, c = butter_lowpass(cutoff_low, sample_freq, order)
+    d, c = butter_low_pass(cutoff_low, sample_freq, order)
     y = lfilter(d, c, x)
     f, e = notch_filter(powerline, sample_freq, 30)
     z = lfilter(f, e, y)
-    return y
+    return z
 
 def return_peaks(filtered_signal):
-    peaks, _ = find_peaks(filter_signal, height=0, distance=250)
+    peaks, _ = find_peaks(filtered_signal, height=0, distance=250)
     return peaks
 
 def find_bpm(peaks, signal, sample_freq):
@@ -116,3 +101,23 @@ def find_SD(intervals):
     for i in range(0, len(intervals)):
         cum_sum += (intervals[i] - mean_diff)**2
     SD = (cum_sum/len(intervals))**0.5
+    return SD
+
+def find_HR_HRV(subject, sample_freq, filter_order, powerline):
+    ppg, ecg, time = obtain_ppg_ecg(subject)
+    ppg_filtered = overall_filter(ppg, sample_freq, filter_order, powerline)
+    ecg_filtered = overall_filter(ecg, sample_freq, filter_order, powerline)
+    ppg_peaks = return_peaks(ppg_filtered)
+    ecg_peaks = return_peaks(ecg_filtered)
+    ppg_bpm = find_bpm(ppg_peaks, ppg_filtered, sample_freq)
+    ecg_bpm = find_bpm(ecg_peaks, ecg_filtered, sample_freq)
+    ppg_intervals = find_peak_intervals(ppg_peaks, sample_freq)
+    ecg_intervals = find_peak_intervals(ecg_peaks, sample_freq)
+    ppg_RMSSD = find_RMSSD(ppg_intervals)
+    ecg_RMSSD = find_RMSSD(ecg_intervals)
+    ppg_SDNN = find_SD(ppg_intervals)
+    ecg_SDRR = find_SD(ecg_intervals)
+    HR = {"PPG": ppg_bpm, "ECG": ecg_bpm}
+    RMSSD = {"PPG": ppg_RMSSD, "ECG": ecg_RMSSD}
+    HRSD = {"PPG": ppg_SDNN, "ECG": ecg_SDRR}
+    return HR, RMSSD, HRSD
