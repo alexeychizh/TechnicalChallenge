@@ -1,0 +1,118 @@
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+from scipy import signal
+from scipy.signal import butter, iirnotch, lfilter, find_peaks
+import numpy as np
+
+cwd = os.getcwd()
+
+D05 = pd.read_csv(f'{cwd}/Data/D05 Normotensive.csv')
+D09 = pd.read_csv(f'{cwd}/Data/D09 Hypertensive.csv')
+D16 = pd.read_csv(f'{cwd}/Data/D16 Hypertensive.csv')
+D17 = pd.read_csv(f'{cwd}/Data/D17 Normotensive.csv')
+D21 = pd.read_csv(f'{cwd}/Data/D21 Hypotensive.csv')
+D43 = pd.read_csv(f'{cwd}/Data/D43 Hypertensive.csv')
+D44 = pd.read_csv(f'{cwd}/Data/D44 Hypertensive.csv')
+D45 = pd.read_csv(f'{cwd}/Data/D45 Normotensive.csv')
+D46 = pd.read_csv(f'{cwd}/Data/D46 Normotensive.csv')
+
+subjects = [D05, D09, D16, D17, D21, D43, D44, D45, D46]
+sample_freq = 500
+cutoff_high = 0.5
+cutoff_low = 2
+powerline = 50
+order = 5
+
+def obtain_ppg_ecg(subject):
+    # Obtain numpy arrays of recorded ECG, PPG and time in ms for subject.
+    ecg = subject['ecg'].to_numpy()
+    ppg = subject['ppg'].to_numpy()
+    time = subject['time'].to_numpy*1e-3
+    return ecg, ppg, time
+
+def butter_high_pass(cutoff, sample_freq, order):
+    #High-pass Butterworth filter that attenuates frequencies below cutoff value.
+    nyq = 0.5*sample_freq
+    normal_cutoff = cutoff/nyq
+    b, a = butter(order, normal_cutoff, btype='high', analog=False, output='ba')
+    return b, a
+
+def butter_low_pass(cutoff, sample_freq, order):
+    # Low-pass Butterworth filter that attenuates frequencies above cutoff value.
+    nyq = 0.5*sample_freq
+    normal_cutoff = cutoff/nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False, output='ba')
+    return b, a
+
+def notch_filter(cutoff, sample_freq, q):
+    # Notch IIR filter that attenuates signal from specified frequencies.
+    nyq = 0.5*sample_freq
+    freq = cutoff/nyq
+    b, a = iirnotch(freq, q)
+    return b, a
+
+def high_pass(signal, sample_freq, order):
+    b,a = butter_high_pass(cutoff_high, sample_freq, order)
+    x = lfilter(b, a, signal)
+    return x
+
+def low_pass(signal, sample_freq, order):
+    b,a = butter_low_pass(cutoff_low, sample_freq, order)
+    y = lfilter(b, a, signal)
+    return y
+
+def notch(signal, powerline_freq, sample_freq, q):
+    b,a = notch_filter(powerline_freq, sample_freq, q)
+    z = lfilter(b, a, signal)
+    return z
+
+def overall_filter(signal, sample_freq, order):
+    b, a = butter_highpass(cutoff_high, sample_freq, order)
+    x = lfilter(b, a, signal)
+    d, c = butter_lowpass(cutoff_low, sample_freq, order)
+    y = lfilter(d, c, x)
+    f, e = notch_filter(powerline, sample_freq, 30)
+    z = lfilter(f, e, y)
+    return y
+
+def return_peaks(filtered_signal):
+    peaks, _ = find_peaks(filter_signal, height=0, distance=250)
+    return peaks
+
+def find_bpm(peaks, signal, sample_freq):
+    #returns bpm from list of peaks
+    num_peaks = len(peaks)
+    #timespan in secs
+    timespan = len(signal)/sample_freq
+    #timespan in mins
+    mins = timespan/60
+    bpm = num_peaks/mins
+    return bpm
+
+def find_peak_intervals(peaks, sample_freq):
+    intervals = np.zeros(len(peaks)-1)
+    for i in range(0,len(intervals)):
+        i_1 = i + 1
+        intervals[i] = peaks[i_1] - peaks[i]
+    # in seconds
+    intervals /= sample_freq
+    return intervals
+
+def find_RMSSD(intervals):
+    #calculates root mean square of successive differences in seconds. Indicator of HRV.
+    num_terms = len(intervals)
+    cum_sum = 0
+    for i in range(0, len(intervals)-1):
+        i_1 = i + 1
+        cum_sum += (intervals[i_1] - intervals[i])**2
+    RMSSD = (cum_sum/(num_terms-1))**0.5
+    return RMSSD
+
+def find_SD(intervals):
+    #calculates standard deviation of peak intervals in seconds. Indicator of HRV.
+    mean_diff = sum(intervals)/len(intervals)
+    cum_sum = 0
+    for i in range(0, len(intervals)):
+        cum_sum += (intervals[i] - mean_diff)**2
+    SD = (cum_sum/len(intervals))**0.5
